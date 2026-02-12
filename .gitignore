@@ -4,4 +4,4 @@ venv/
 env/
 *.pyc
 __pycache__/
-data/
+data/lab1/checkpoints/
