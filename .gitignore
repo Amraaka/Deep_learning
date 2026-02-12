@@ -5,3 +5,5 @@ env/
 *.pyc
 __pycache__/
 data/lab1/checkpoints/
+data/
+lab1/checkpoints/complete_NN.pkl
