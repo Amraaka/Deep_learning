@@ -7,3 +7,5 @@ __pycache__/
 data/lab1/checkpoints/
 data/
 lab1/checkpoints/complete_NN.pkl
+img_align_celeba/
+img_align_celeba/img_align_celeba
