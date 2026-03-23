@@ -1,0 +1,29 @@
+Using device: cuda
+Epoch 001/40 | train_loss=0.000326 | val_loss=0.000075 | time=64.6s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 002/40 | train_loss=0.000084 | val_loss=0.000085 | time=60.9s
+Epoch 003/40 | train_loss=0.000066 | val_loss=0.000062 | time=61.1s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 004/40 | train_loss=0.000057 | val_loss=0.000070 | time=60.9s
+Epoch 005/40 | train_loss=0.000050 | val_loss=0.000065 | time=60.4s
+  Saved periodic checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/epoch_005.pt
+Epoch 006/40 | train_loss=0.000045 | val_loss=0.000052 | time=60.9s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 007/40 | train_loss=0.000042 | val_loss=0.000054 | time=61.1s
+Epoch 008/40 | train_loss=0.000040 | val_loss=0.000034 | time=61.1s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 009/40 | train_loss=0.000038 | val_loss=0.000049 | time=60.5s
+Epoch 010/40 | train_loss=0.000035 | val_loss=0.000037 | time=60.7s
+  Saved periodic checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/epoch_010.pt
+Epoch 011/40 | train_loss=0.000035 | val_loss=0.000037 | time=60.4s
+Epoch 012/40 | train_loss=0.000033 | val_loss=0.000030 | time=62.3s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 013/40 | train_loss=0.000032 | val_loss=0.000038 | time=64.3s
+Epoch 014/40 | train_loss=0.000031 | val_loss=0.000032 | time=63.4s
+Epoch 015/40 | train_loss=0.000030 | val_loss=0.000024 | time=63.7s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+  Saved periodic checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/epoch_015.pt
+Epoch 016/40 | train_loss=0.000029 | val_loss=0.000028 | time=63.6s
+Epoch 017/40 | train_loss=0.000029 | val_loss=0.000031 | time=62.2s
+Epoch 018/40 | train_loss=0.000028 | val_loss=0.000026 | time=62.7s
+Epoch 019/40 | train_loss=0.000028 | val_loss=0.000026 | time=62.2s

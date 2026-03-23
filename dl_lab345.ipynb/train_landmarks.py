@@ -19,7 +19,7 @@ CFG = {
     "save_every": 5,
     "grad_clip": 1.0,
     "use_amp": True,
-    "out_dir": "checkpoints_landmarks3",
+    "out_dir": "checkpoints_landmarks4",
 }
 
 LR = 3e-4
@@ -92,7 +92,7 @@ class CelebALandmarks(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        return image, landmarks.view(-1)  # shape: (10,)
+        return image, landmarks.reshape(-1)  # shape: (10,)
 
     def _augment_image_and_landmarks(self, image, landmarks):
         """
@@ -251,7 +251,6 @@ test_loader = DataLoader(
 set_seed(CFG["seed"])
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
 
 model = InceptionModel(num_classes=10).to(device)
 
@@ -308,10 +307,21 @@ history = []
 best_val_loss = float("inf")
 best_epoch = -1
 log_csv = os.path.join(CFG["out_dir"], "training_log.csv")
+log_txt = os.path.join(CFG["out_dir"], "training_log.txt")
 
 config_path = os.path.join(CFG["out_dir"], "train_config.json")
 with open(config_path, "w") as f:
     json.dump({**CFG, "lr": LR, "optimizer": "AdamW", "weight_decay": WEIGHT_DECAY, "loss": "MSE", "dropout": DROPOUT}, f, indent=2)
+
+def log_line(message):
+    print(message)
+    with open(log_txt, "a", encoding="utf-8") as f:
+        f.write(message + "\n")
+
+with open(log_txt, "w", encoding="utf-8") as f:
+    f.write("")
+
+log_line(f"Using device: {device}")
 
 start_all = time.time()
 
@@ -333,7 +343,7 @@ for epoch in range(1, CFG["epochs"] + 1):
     history.append(row)
     pd.DataFrame(history).to_csv(log_csv, index=False)
 
-    print(
+    log_line(
         f"Epoch {epoch:03d}/{CFG['epochs']} | "
         f"train_loss={train_loss:.6f} | val_loss={val_loss:.6f} | "
         f"time={epoch_sec:.1f}s"
@@ -351,7 +361,7 @@ for epoch in range(1, CFG["epochs"] + 1):
             "val_loss": val_loss,
             "config": CFG,
         }, best_path)
-        print(f"  Saved BEST checkpoint -> {best_path}")
+        log_line(f"  Saved BEST checkpoint -> {best_path}")
 
     # Save every N epochs
     if epoch % CFG["save_every"] == 0:
@@ -364,7 +374,7 @@ for epoch in range(1, CFG["epochs"] + 1):
             "val_loss": val_loss,
             "config": CFG,
         }, nth_path)
-        print(f"  Saved periodic checkpoint -> {nth_path}")
+        log_line(f"  Saved periodic checkpoint -> {nth_path}")
 
 final_path = os.path.join(CFG["out_dir"], "final_model.pt")
 torch.save({
@@ -378,13 +388,15 @@ hist_df = pd.DataFrame(history)
 hist_df.to_csv(log_csv, index=False)
 
 total_time = time.time() - start_all
-print("\nTraining complete.")
-print(f"Best epoch: {best_epoch} | Best val loss: {best_val_loss:.6f}")
-print(f"Final model: {final_path}")
-print(f"Training log CSV: {log_csv}")
-print(f"Total time: {total_time/60:.1f} min")
+log_line("")
+log_line("Training complete.")
+log_line(f"Best epoch: {best_epoch} | Best val loss: {best_val_loss:.6f}")
+log_line(f"Final model: {final_path}")
+log_line(f"Training log CSV: {log_csv}")
+log_line(f"Training log TXT: {log_txt}")
+log_line(f"Total time: {total_time/60:.1f} min")
 
 best_ckpt = torch.load(os.path.join(CFG["out_dir"], "best_model.pt"), map_location=device)
 model.load_state_dict(best_ckpt["model_state_dict"])
 test_loss = run_one_epoch(test_loader, train_mode=False)
-print(f"Test loss (best checkpoint): {test_loss:.6f}")
+log_line(f"Test loss (best checkpoint): {test_loss:.6f}")
