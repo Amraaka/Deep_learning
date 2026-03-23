@@ -1,0 +1,14 @@
+{
+  "seed": 42,
+  "epochs": 40,
+  "batch_size": 128,
+  "save_every": 5,
+  "grad_clip": 1.0,
+  "use_amp": true,
+  "out_dir": "./checkpoints_static",
+  "lr": 0.0003,
+  "optimizer": "AdamW",
+  "weight_decay": 0.0,
+  "loss": "MSE",
+  "dropout": 0.0
+}

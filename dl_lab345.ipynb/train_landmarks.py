@@ -1,347 +1,367 @@
-import copy
-import logging
-from datetime import datetime
-from pathlib import Path
-
+import os
+import time
+import json
+import random
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
-from torch.utils.data import DataLoader, Dataset, random_split
+import torch.optim as optim
+import torchvision.transforms as transforms
+from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 
 
-# --- Dataset ---
+# Best params from sanity check:
+# lr=3e-4, optimizer=AdamW, weight_decay=0.0, loss=MSE, dropout=0.0
 
-class CelebALandmarksDataset(Dataset):
-    def __init__(self, landmarks_path, img_dir, transform=None):
-        self.img_dir = Path(img_dir)
+
+# ------------------ static config ------------------
+CFG = {
+    "seed": 42,
+    "epochs": 40,
+    "batch_size": 128,
+    "save_every": 5,
+    "grad_clip": 1.0,
+    "use_amp": True,
+    "out_dir": "./checkpoints_static",
+}
+
+# Fixed training params selected from sanity check
+LR = 3e-4
+WEIGHT_DECAY = 0.0
+DROPOUT = 0.0
+
+os.makedirs(CFG["out_dir"], exist_ok=True)
+
+
+# ------------------ reproducibility ------------------
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+class CelebALandmarks(Dataset):
+    def __init__(self, root_dir, split="train", transform=None):
+        self.root_dir = root_dir
+        self.img_dir = os.path.join(root_dir, "img_align_celeba")
         self.transform = transform
-        self.samples = []
-        with open(landmarks_path) as f:
-            lines = f.readlines()
-        for line in lines[2:]:
-            parts = line.split()
-            if len(parts) >= 11:
-                fname = parts[0]
-                coords = [float(x) for x in parts[1:11]]
-                self.samples.append((fname, coords))
 
-        self.samples = [(f, c) for f, c in self.samples if (self.img_dir / f).exists()]
+        partition_file = os.path.join(root_dir, "list_eval_partition.txt")
+        landmark_file = os.path.join(root_dir,"landmarks", "list_landmarks_align_celeba.txt")
+
+        self.partition = {}
+        with open(partition_file, "r") as f:
+            for line in f:
+                name, p = line.strip().split()
+                self.partition[name] = int(p)
+
+        split_map = {"train": 0, "val": 1, "test": 2}
+        self.target_split = split_map[split]
+
+        self.samples = []
+        with open(landmark_file, "r") as f:
+            lines = f.readlines()
+
+        lines = lines[2:]
+
+        for line in lines:
+            parts = line.strip().split()
+            img_name = parts[0]
+            coords = list(map(float, parts[1:]))
+
+            if self.partition[img_name] == self.target_split:
+                self.samples.append((img_name, coords))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        fname, coords = self.samples[idx]
-        img = Image.open(self.img_dir / fname).convert("RGB")
-        landmarks = torch.tensor(coords, dtype=torch.float32)
+        img_name, coords = self.samples[idx]
+
+        img_path = os.path.join(self.img_dir, img_name)
+        image = Image.open(img_path).convert("RGB")
+
+        w, h = image.size
+
+        landmarks = torch.tensor(coords, dtype=torch.float32).view(-1, 2)
+
+        landmarks[:, 0] /= w
+        landmarks[:, 1] /= h
+
         if self.transform:
-            img = self.transform(img)
-        return img, landmarks
+            image = self.transform(image)
 
+        return image, landmarks.view(-1)  # shape: (10,)
 
-# --- Model ---
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_chanels, **kwargs):
-        super(ConvBlock, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_chanels, bias=False, **kwargs)
-        self.bn = nn.BatchNorm2d(out_chanels)
-        self.relu = nn.ReLU(inplace=True)
+    def __init__(self, in_channels, out_channels, **kwargs):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, **kwargs)
+        self.bn = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
-        return self.relu(self.bn(self.conv(x)))
+        return torch.relu(self.bn(self.conv(x)))
 
 
 class InceptionBlock(nn.Module):
-    def __init__(self, in_channels, out_1x1, red_3x3, out_3x3, red_5x5, out_5x5, out_pool):
-        super(InceptionBlock, self).__init__()
+    def __init__(
+        self, in_channels, out_1x1, red_3x3, out_3x3, red_5x5, out_5x5, out_pool
+    ):
+        super().__init__()
 
         self.branch1 = ConvBlock(in_channels, out_1x1, kernel_size=1)
 
         self.branch2 = nn.Sequential(
             ConvBlock(in_channels, red_3x3, kernel_size=1),
-            ConvBlock(red_3x3, out_3x3, kernel_size=3, padding=1)
+            ConvBlock(red_3x3, out_3x3, kernel_size=3, padding=1),
         )
 
         self.branch3 = nn.Sequential(
             ConvBlock(in_channels, red_5x5, kernel_size=1),
             ConvBlock(red_5x5, out_5x5, kernel_size=3, padding=1),
-            ConvBlock(out_5x5, out_5x5, kernel_size=3, padding=1)
+            ConvBlock(out_5x5, out_5x5, kernel_size=3, padding=1),
         )
 
         self.branch4 = nn.Sequential(
-            nn.MaxPool2d(kernel_size=3, stride=1, padding=1),
-            ConvBlock(in_channels, out_pool, kernel_size=1)
+            nn.AvgPool2d(kernel_size=3, stride=1, padding=1),
+            ConvBlock(in_channels, out_pool, kernel_size=1),
         )
 
-        self.out_channels = out_1x1 + out_3x3 + out_5x5 + out_pool
+        total_out = out_1x1 + out_3x3 + out_5x5 + out_pool
+        self.conv_linear = nn.Conv2d(total_out, total_out, kernel_size=1)
+
+        self.shortcut = nn.Identity()
+        if in_channels != total_out:
+            self.shortcut = nn.Conv2d(in_channels, total_out, kernel_size=1)
 
     def forward(self, x):
-        return torch.cat([self.branch1(x), self.branch2(x), self.branch3(x), self.branch4(x)], dim=1)
+        out = torch.cat(
+            [self.branch1(x), self.branch2(x), self.branch3(x), self.branch4(x)], dim=1
+        )
+        out = self.conv_linear(out)
+        return torch.relu(out + self.shortcut(x))
 
 
-class InceptionResBlock(nn.Module):
-    def __init__(self, in_channels):
-        super(InceptionResBlock, self).__init__()
-        self.block = InceptionBlock(in_channels, 64, 96, 128, 16, 32, 32)
-        self.proj = nn.Conv2d(self.block.out_channels, in_channels, kernel_size=1, bias=False)
-        self.bn = nn.BatchNorm2d(in_channels)
+class InceptionModel(nn.Module):
+    def __init__(self, num_classes=10):
+        super().__init__()
+
+        self.conv1 = ConvBlock(3, 32, kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = ConvBlock(32, 64, kernel_size=3, stride=1, padding=1)
+
+        self.incept3a = InceptionBlock(64, 32, 32, 64, 16, 32, 32)
+        self.incept3b = InceptionBlock(160, 64, 64, 96, 32, 64, 64)
+
+        self.incept4a = InceptionBlock(288, 96, 64, 128, 32, 64, 64)
+        self.incept4b = InceptionBlock(352, 96, 64, 128, 32, 64, 64)
+
+        self.incept5a = InceptionBlock(352, 128, 96, 160, 32, 96, 96)
+
+        self.dropout = nn.Dropout(p=DROPOUT)
+        self.fc = nn.Linear(480, num_classes)
 
     def forward(self, x):
-        out = self.block(x)
-        out = self.proj(out)
-        out = self.bn(out)
-        return F.relu(out + x)
+        x = self.conv1(x)
+        x = self.maxpool(x)
 
+        x = self.conv2(x)
+        x = self.maxpool(x)
 
-class InceptionLandmarkModel(nn.Module):
-    def __init__(self, num_landmarks=5):
-        super(InceptionLandmarkModel, self).__init__()
+        x = self.incept3a(x)
+        x = self.incept3b(x)
+        x = self.maxpool(x)
 
-        self.conv_blocks = nn.Sequential(
-            ConvBlock(3, 64, kernel_size=7, stride=2, padding=3),
-            nn.MaxPool2d(3, stride=2, padding=1),
-            ConvBlock(64, 128, kernel_size=3, padding=1),
-            ConvBlock(128, 192, kernel_size=3, padding=1),
-            nn.MaxPool2d(3, stride=2, padding=1)
-        )
+        x = self.incept4a(x)
+        x = self.incept4b(x)
+        x = self.maxpool(x)
 
-        self.inception_block_group1 = nn.Sequential(
-            InceptionBlock(192, 64, 96, 128, 16, 32, 32),
-            InceptionBlock(256, 128, 128, 192, 32, 96, 64),
-            nn.MaxPool2d(3, stride=2, padding=1)
-        )
+        x = self.incept5a(x)
 
-        self.inception_res_blocks = nn.Sequential(
-            InceptionResBlock(480),
-            InceptionResBlock(480),
-            InceptionResBlock(480)
-        )
-
-        self.inception_block_group2 = nn.Sequential(
-            InceptionBlock(480, 256, 160, 320, 32, 128, 128),
-            InceptionBlock(832, 256, 192, 320, 48, 128, 128)
-        )
-
-        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
-        self.dropout = nn.Dropout(0.4)
-        self.fc = nn.Linear(832, num_landmarks * 2)
-
-    def forward(self, x):
-        x = self.conv_blocks(x)
-        x = self.inception_block_group1(x)
-        x = self.inception_res_blocks(x)
-        x = self.inception_block_group2(x)
-        x = self.global_avg_pool(x)
-        x = torch.flatten(x, 1)
+        x = nn.functional.adaptive_avg_pool2d(x, (1, 1))
+        x = x.view(x.size(0), -1)
         x = self.dropout(x)
         x = self.fc(x)
-        return torch.sigmoid(x)
+        return x
 
 
-# --- Logging ---
+data_root = "/home/toru2/Amara/Deep_learning/dl_lab345.ipynb/dataset"
 
-def setup_logging(log_dir):
-    """Configure logging to file only."""
-    log_dir = Path(log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = log_dir / f"train_{timestamp}.log"
+transform = transforms.Compose([transforms.ToTensor()])
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    logger.handlers.clear()
+train_dataset = CelebALandmarks(root_dir=data_root, split="train", transform=transform)
+val_dataset = CelebALandmarks(root_dir=data_root, split="val", transform=transform)
+test_dataset = CelebALandmarks(root_dir=data_root, split="test", transform=transform)
 
-    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=CFG["batch_size"],
+    shuffle=True,
+    num_workers=4,
+    pin_memory=True,
+)
+val_loader = DataLoader(
+    val_dataset,
+    batch_size=CFG["batch_size"],
+    shuffle=False,
+    num_workers=4,
+    pin_memory=True,
+)
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=CFG["batch_size"],
+    shuffle=False,
+    num_workers=4,
+    pin_memory=True,
+)
 
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
-    file_handler.setFormatter(fmt)
-    logger.addHandler(file_handler)
+set_seed(CFG["seed"])
 
-    logging.info(f"Logging to {log_file}")
-    return log_file
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
+# ------------------ model ------------------
+model = InceptionModel(num_classes=10).to(device)
 
-# --- Training ---
+# ------------------ loss ------------------
+criterion = nn.MSELoss()
 
-def train_epoch(model, loader, criterion, optimizer, device, img_w=178, img_h=218):
-    model.train()
+# ------------------ optimizer ------------------
+optimizer = optim.AdamW(
+    model.parameters(),
+    lr=LR,
+    weight_decay=WEIGHT_DECAY,
+)
+
+scaler = torch.amp.GradScaler(device="cuda", enabled=(CFG["use_amp"] and device.type == "cuda"))
+
+# ------------------ training utilities ------------------
+def run_one_epoch(loader, train_mode=True):
+    if train_mode:
+        model.train()
+    else:
+        model.eval()
+
     total_loss = 0.0
-    for imgs, landmarks in loader:
-        imgs = imgs.float().to(device) / 255.0
-        landmarks = landmarks.to(device)
-        landmarks[:, 0::2] /= img_w
-        landmarks[:, 1::2] /= img_h
+    total_samples = 0
 
-        optimizer.zero_grad()
-        preds = model(imgs)
-        loss = criterion(preds, landmarks)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-    return total_loss / len(loader)
+    for images, targets in loader:
+        images = images.to(device, non_blocking=True).float()
+        targets = targets.to(device, non_blocking=True).float()
 
+        if train_mode:
+            optimizer.zero_grad(set_to_none=True)
 
-def validate(model, loader, criterion, device, img_w=178, img_h=218):
-    model.eval()
-    total_loss = 0.0
-    with torch.no_grad():
-        for imgs, landmarks in loader:
-            imgs = imgs.float().to(device) / 255.0
-            landmarks = landmarks.to(device)
-            landmarks[:, 0::2] /= img_w
-            landmarks[:, 1::2] /= img_h
+            with torch.autocast(device_type=device.type, enabled=(CFG["use_amp"] and device.type == "cuda")):
+                preds = model(images)
+                loss = criterion(preds, targets)
 
-            preds = model(imgs)
-            loss = criterion(preds, landmarks)
-            total_loss += loss.item()
-    return total_loss / len(loader)
+            scaler.scale(loss).backward()
 
+            if CFG["grad_clip"] is not None and CFG["grad_clip"] > 0:
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), CFG["grad_clip"])
 
-def save_checkpoint(path, model, optimizer, scheduler, epoch, best_val_loss):
-    """Save full training state for resume and analysis."""
-    checkpoint = {
-        "epoch": epoch,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict(),
-        "best_val_loss": best_val_loss,
-    }
-    torch.save(checkpoint, path)
-
-
-def main():
-    # Training configuration (same values as previous CLI defaults).
-    landmarks_path = Path(
-        "/home/toru2/Amara/Deep_learning/dl_lab345.ipynb/dataset/landmarks/list_landmarks_align_celeba.txt"
-    )
-    img_dir = Path("/home/toru2/Amara/Deep_learning/dl_lab345.ipynb/dataset/img_align_celeba")
-    ckpt_dir = Path("/home/toru2/Amara/Deep_learning/checkpoints")
-    log_dir = None
-
-    epochs = 30
-    batch_size = 128
-    lr = 1e-3
-    early_stop_patience = 5
-    early_stop_min_delta = 1e-4
-    save_every_n_epochs = 5
-    num_workers = 8
-    seed = 42
-
-    torch.manual_seed(seed)
-
-    # Paths
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    resolved_log_dir = Path(log_dir) if log_dir else ckpt_dir / "logs"
-    log_file = setup_logging(resolved_log_dir)
-    logging.info(f"Log file saved at: {log_file}")
-
-    # Dataset
-    transform = torchvision.transforms.Compose([
-        torchvision.transforms.PILToTensor(),
-    ])
-    full_dataset = CelebALandmarksDataset(landmarks_path, img_dir, transform=transform)
-
-    total_size = len(full_dataset)
-    train_size = int(0.7 * total_size)
-    val_size = int(0.15 * total_size)
-    test_size = total_size - train_size - val_size
-
-    train_set, val_set, test_set = random_split(
-        full_dataset, [train_size, val_size, test_size],
-        generator=torch.Generator().manual_seed(seed)
-    )
-    logging.info(
-        f"Train: {len(train_set)}, Val: {len(val_set)}, Test: {len(test_set)}"
-    )
-
-    train_loader = DataLoader(
-        train_set,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-    val_loader = DataLoader(
-        val_set,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-    test_loader = DataLoader(
-        test_set,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True
-    )
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    logging.info(f"Device: {device}")
-
-    model = InceptionLandmarkModel(num_landmarks=5).to(device)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3
-    )
-
-    best_val_loss = float("inf")
-    best_state_dict = None
-    epochs_without_improvement = 0
-
-    for epoch in range(1, epochs + 1):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss = validate(model, val_loader, criterion, device)
-        scheduler.step(val_loss)
-
-        save_checkpoint(ckpt_dir / "face_landmarks_last.pt", model, optimizer, scheduler, epoch, best_val_loss)
-
-        if save_every_n_epochs > 0 and epoch % save_every_n_epochs == 0:
-            periodic_ckpt = ckpt_dir / f"face_landmarks_epoch_{epoch}.pt"
-            save_checkpoint(periodic_ckpt, model, optimizer, scheduler, epoch, best_val_loss)
-            logging.info(f"  -> Saved periodic checkpoint to {periodic_ckpt}")
-
-        logging.info(f"Epoch {epoch}/{epochs} | Train Loss {train_loss:.5f} | Val Loss {val_loss:.5f}")
-
-        if val_loss < (best_val_loss - early_stop_min_delta):
-            best_val_loss = val_loss
-            best_state_dict = copy.deepcopy(model.state_dict())
-            epochs_without_improvement = 0
-            ckpt_path = ckpt_dir / "face_landmarks_best.pt"
-            save_checkpoint(ckpt_path, model, optimizer, scheduler, epoch, best_val_loss)
-            logging.info(f"  -> Saved best model to {ckpt_path}")
+            scaler.step(optimizer)
+            scaler.update()
         else:
-            epochs_without_improvement += 1
-            if early_stop_patience > 0:
-                logging.info(
-                    "  -> No significant val-loss improvement "
-                    f"({epochs_without_improvement}/{early_stop_patience})"
-                )
-            else:
-                logging.info("  -> No significant val-loss improvement")
+            with torch.no_grad():
+                preds = model(images)
+                loss = criterion(preds, targets)
 
-            if early_stop_patience > 0 and epochs_without_improvement >= early_stop_patience:
-                logging.info(
-                    "Early stopping triggered at epoch "
-                    f"{epoch}. Best val loss: {best_val_loss:.5f}"
-                )
-                break
+        bs = images.size(0)
+        total_loss += loss.item() * bs
+        total_samples += bs
 
-    # Save final model as the best observed weights to reduce overfitting risk.
-    if best_state_dict is not None:
-        model.load_state_dict(best_state_dict)
+    return total_loss / total_samples
 
-    test_loss = validate(model, test_loader, criterion, device)
-    logging.info(f"Final Test Loss: {test_loss:.5f}")
+# ------------------ logging + checkpoints ------------------
+history = []
+best_val_loss = float("inf")
+best_epoch = -1
 
-    torch.save(model.state_dict(), ckpt_dir / "face_landmarks_final.pt")
-    logging.info(f"Training complete. Final model saved to {ckpt_dir / 'face_landmarks_final.pt'}")
+config_path = os.path.join(CFG["out_dir"], "train_config.json")
+with open(config_path, "w") as f:
+    json.dump({**CFG, "lr": LR, "optimizer": "AdamW", "weight_decay": WEIGHT_DECAY, "loss": "MSE", "dropout": DROPOUT}, f, indent=2)
 
+start_all = time.time()
 
-if __name__ == "__main__":
-    main()
+for epoch in range(1, CFG["epochs"] + 1):
+    t0 = time.time()
+
+    train_loss = run_one_epoch(train_loader, train_mode=True)
+    val_loss = run_one_epoch(val_loader, train_mode=False)
+
+    epoch_sec = time.time() - t0
+
+    row = {
+        "epoch": epoch,
+        "train_loss": float(train_loss),
+        "val_loss": float(val_loss),
+        "lr": optimizer.param_groups[0]["lr"],
+        "epoch_time_sec": round(epoch_sec, 2),
+    }
+    history.append(row)
+
+    print(
+        f"Epoch {epoch:03d}/{CFG['epochs']} | "
+        f"train_loss={train_loss:.6f} | val_loss={val_loss:.6f} | "
+        f"time={epoch_sec:.1f}s"
+    )
+
+    # Save best model
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        best_epoch = epoch
+        best_path = os.path.join(CFG["out_dir"], "best_model.pt")
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "val_loss": val_loss,
+            "config": CFG,
+        }, best_path)
+        print(f"  Saved BEST checkpoint -> {best_path}")
+
+    # Save every N epochs
+    if epoch % CFG["save_every"] == 0:
+        nth_path = os.path.join(CFG["out_dir"], f"epoch_{epoch:03d}.pt")
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "config": CFG,
+        }, nth_path)
+        print(f"  Saved periodic checkpoint -> {nth_path}")
+
+# Save final model
+final_path = os.path.join(CFG["out_dir"], "final_model.pt")
+torch.save({
+    "epoch": CFG["epochs"],
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": optimizer.state_dict(),
+    "config": CFG,
+}, final_path)
+
+# Save training log
+hist_df = pd.DataFrame(history)
+log_csv = os.path.join(CFG["out_dir"], "training_log.csv")
+hist_df.to_csv(log_csv, index=False)
+
+total_time = time.time() - start_all
+print("\nTraining complete.")
+print(f"Best epoch: {best_epoch} | Best val loss: {best_val_loss:.6f}")
+print(f"Final model: {final_path}")
+print(f"Training log CSV: {log_csv}")
+print(f"Total time: {total_time/60:.1f} min")
+
+# Optional: evaluate test set with best checkpoint
+best_ckpt = torch.load(os.path.join(CFG["out_dir"], "best_model.pt"), map_location=device)
+model.load_state_dict(best_ckpt["model_state_dict"])
+test_loss = run_one_epoch(test_loader, train_mode=False)
+print(f"Test loss (best checkpoint): {test_loss:.6f}")
