@@ -27,3 +27,22 @@ Epoch 016/40 | train_loss=0.000029 | val_loss=0.000028 | time=63.6s
 Epoch 017/40 | train_loss=0.000029 | val_loss=0.000031 | time=62.2s
 Epoch 018/40 | train_loss=0.000028 | val_loss=0.000026 | time=62.7s
 Epoch 019/40 | train_loss=0.000028 | val_loss=0.000026 | time=62.2s
+Epoch 020/40 | train_loss=0.000027 | val_loss=0.000031 | time=63.9s
+  Saved periodic checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/epoch_020.pt
+Epoch 021/40 | train_loss=0.000027 | val_loss=0.000026 | time=60.9s
+Epoch 022/40 | train_loss=0.000027 | val_loss=0.000024 | time=60.0s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 023/40 | train_loss=0.000026 | val_loss=0.000023 | time=60.9s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 024/40 | train_loss=0.000026 | val_loss=0.000029 | time=63.0s
+Epoch 025/40 | train_loss=0.000026 | val_loss=0.000024 | time=61.2s
+  Saved periodic checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/epoch_025.pt
+Epoch 026/40 | train_loss=0.000025 | val_loss=0.000028 | time=60.8s
+Epoch 027/40 | train_loss=0.000025 | val_loss=0.000025 | time=62.5s
+Epoch 028/40 | train_loss=0.000025 | val_loss=0.000026 | time=62.7s
+Epoch 029/40 | train_loss=0.000025 | val_loss=0.000026 | time=65.1s
+Epoch 030/40 | train_loss=0.000025 | val_loss=0.000028 | time=63.0s
+  Saved periodic checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/epoch_030.pt
+Epoch 031/40 | train_loss=0.000024 | val_loss=0.000025 | time=62.5s
+Epoch 032/40 | train_loss=0.000024 | val_loss=0.000021 | time=63.6s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
