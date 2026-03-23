@@ -24,7 +24,7 @@ CFG = {
     "save_every": 5,
     "grad_clip": 1.0,
     "use_amp": True,
-    "out_dir": "./checkpoints_static",
+    "out_dir": "./checkpoints_improved",
 }
 
 # Fixed training params selected from sanity check
@@ -110,39 +110,26 @@ class InceptionBlock(nn.Module):
     def __init__(
         self, in_channels, out_1x1, red_3x3, out_3x3, red_5x5, out_5x5, out_pool
     ):
-        super().__init__()
 
+        super(InceptionBlock, self).__init__()
         self.branch1 = ConvBlock(in_channels, out_1x1, kernel_size=1)
-
         self.branch2 = nn.Sequential(
-            ConvBlock(in_channels, red_3x3, kernel_size=1),
+            ConvBlock(in_channels, red_3x3, kernel_size=1, padding=0),
             ConvBlock(red_3x3, out_3x3, kernel_size=3, padding=1),
         )
-
         self.branch3 = nn.Sequential(
             ConvBlock(in_channels, red_5x5, kernel_size=1),
-            ConvBlock(red_5x5, out_5x5, kernel_size=3, padding=1),
-            ConvBlock(out_5x5, out_5x5, kernel_size=3, padding=1),
+            ConvBlock(red_5x5, out_5x5, kernel_size=5, padding=2),
         )
-
         self.branch4 = nn.Sequential(
-            nn.AvgPool2d(kernel_size=3, stride=1, padding=1),
+            nn.MaxPool2d(kernel_size=3, padding=1, stride=1),
             ConvBlock(in_channels, out_pool, kernel_size=1),
         )
 
-        total_out = out_1x1 + out_3x3 + out_5x5 + out_pool
-        self.conv_linear = nn.Conv2d(total_out, total_out, kernel_size=1)
-
-        self.shortcut = nn.Identity()
-        if in_channels != total_out:
-            self.shortcut = nn.Conv2d(in_channels, total_out, kernel_size=1)
-
     def forward(self, x):
-        out = torch.cat(
-            [self.branch1(x), self.branch2(x), self.branch3(x), self.branch4(x)], dim=1
-        )
-        out = self.conv_linear(out)
-        return torch.relu(out + self.shortcut(x))
+        branches = (self.branch1, self.branch2, self.branch3, self.branch4)
+        return torch.cat([branch(x) for branch in branches], 1)
+    
 
 
 class InceptionModel(nn.Module):
@@ -207,7 +194,7 @@ val_loader = DataLoader(
     val_dataset,
     batch_size=CFG["batch_size"],
     shuffle=False,
-    num_workers=4,
+    num_workers=0,
     pin_memory=True,
 )
 test_loader = DataLoader(

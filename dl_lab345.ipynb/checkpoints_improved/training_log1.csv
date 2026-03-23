@@ -1,0 +1,58 @@
+Epoch 004/40 | train_loss=0.000052 | val_loss=0.000068 | time=49.9s
+Epoch 005/40 | train_loss=0.000046 | val_loss=0.000054 | time=65.9s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_005.pt
+Epoch 006/40 | train_loss=0.000038 | val_loss=0.000044 | time=69.9s
+  Saved BEST checkpoint -> ./checkpoints_improved/best_model.pt
+Epoch 007/40 | train_loss=0.000035 | val_loss=0.000036 | time=70.1s
+  Saved BEST checkpoint -> ./checkpoints_improved/best_model.pt
+Epoch 008/40 | train_loss=0.000031 | val_loss=0.000038 | time=59.9s
+Epoch 009/40 | train_loss=0.000028 | val_loss=0.000030 | time=69.8s
+  Saved BEST checkpoint -> ./checkpoints_improved/best_model.pt
+        Epoch 010/40 | train_loss=0.000026 | val_loss=0.000033 | time=70.1s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_010.pt
+Epoch 011/40 | train_loss=0.000023 | val_loss=0.000020 | time=70.9s
+  Saved BEST checkpoint -> ./checkpoints_improved/best_model.pt
+Epoch 012/40 | train_loss=0.000021 | val_loss=0.000029 | time=69.7s
+Epoch 013/40 | train_loss=0.000020 | val_loss=0.000020 | time=69.7s
+Epoch 014/40 | train_loss=0.000019 | val_loss=0.000048 | time=68.9s
+Epoch 015/40 | train_loss=0.000018 | val_loss=0.000022 | time=70.2s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_015.pt
+Epoch 016/40 | train_loss=0.000017 | val_loss=0.000021 | time=71.9s
+Epoch 017/40 | train_loss=0.000018 | val_loss=0.000029 | time=62.9s
+Epoch 018/40 | train_loss=0.000016 | val_loss=0.000024 | time=50.7s
+Epoch 019/40 | train_loss=0.000015 | val_loss=0.000016 | time=50.7s
+  Saved BEST checkpoint -> ./checkpoints_improved/best_model.pt
+Epoch 020/40 | train_loss=0.000015 | val_loss=0.000017 | time=50.9s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_020.pt
+Epoch 021/40 | train_loss=0.000014 | val_loss=0.000019 | time=50.8s
+Epoch 022/40 | train_loss=0.000014 | val_loss=0.000021 | time=49.6s
+Epoch 023/40 | train_loss=0.000015 | val_loss=0.000020 | time=49.3s
+Epoch 024/40 | train_loss=0.000014 | val_loss=0.000019 | time=50.2s
+Epoch 025/40 | train_loss=0.000013 | val_loss=0.000018 | time=50.1s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_025.pt
+Epoch 026/40 | train_loss=0.000013 | val_loss=0.000054 | time=49.4ss
+Epoch 027/40 | train_loss=0.000013 | val_loss=0.000021 | time=49.5s
+Epoch 028/40 | train_loss=0.000012 | val_loss=0.000017 | time=49.1s
+Epoch 029/40 | train_loss=0.000012 | val_loss=0.000016 | time=48.3s
+Epoch 030/40 | train_loss=0.000013 | val_loss=0.000016 | time=48.6s
+  Saved BEST checkpoint -> ./checkpoints_improved/best_model.pt
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_030.pt
+Epoch 031/40 | train_loss=0.000011 | val_loss=0.000021 | time=48.7s
+Epoch 032/40 | train_loss=0.000020 | val_loss=0.000018 | time=48.8s
+Epoch 033/40 | train_loss=0.000012 | val_loss=0.000017 | time=49.7s
+Epoch 034/40 | train_loss=0.000011 | val_loss=0.000016 | time=50.6s
+Epoch 035/40 | train_loss=0.000011 | val_loss=0.000022 | time=50.4s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_035.pt
+Epoch 036/40 | train_loss=0.000010 | val_loss=0.000017 | time=48.8s
+Epoch 037/40 | train_loss=0.000011 | val_loss=0.000018 | time=51.6s
+Epoch 038/40 | train_loss=0.000010 | val_loss=0.000018 | time=50.9s
+Epoch 039/40 | train_loss=0.000010 | val_loss=0.000019 | time=50.8s
+Epoch 040/40 | train_loss=0.000010 | val_loss=0.000021 | time=50.3s
+  Saved periodic checkpoint -> ./checkpoints_improved/epoch_040.pt
+
+Training complete.
+Best epoch: 30 | Best val loss: 0.000016
+Final model: ./checkpoints_improved/final_model.pt
+Training log CSV: ./checkpoints_improved/training_log.csv
+Total time: 37.4 min
+Test loss (best checkpoint): 0.000017    
