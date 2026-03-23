@@ -4,6 +4,7 @@ import json
 import random
 import numpy as np
 import pandas as pd
+import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -37,10 +38,11 @@ def set_seed(seed=42):
     torch.cuda.manual_seed_all(seed)
 
 class CelebALandmarks(Dataset):
-    def __init__(self, root_dir, split="train", transform=None):
+    def __init__(self, root_dir, split="train", transform=None, augment=False):
         self.root_dir = root_dir
         self.img_dir = os.path.join(root_dir, "img_align_celeba")
         self.transform = transform
+        self.augment = augment
 
         partition_file = os.path.join(root_dir, "list_eval_partition.txt")
         landmark_file = os.path.join(root_dir,"landmarks", "list_landmarks_align_celeba.txt")
@@ -81,6 +83,9 @@ class CelebALandmarks(Dataset):
 
         landmarks = torch.tensor(coords, dtype=torch.float32).view(-1, 2)
 
+        if self.augment:
+            image, landmarks = self._augment_image_and_landmarks(image, landmarks)
+
         landmarks[:, 0] /= w
         landmarks[:, 1] /= h
 
@@ -88,6 +93,49 @@ class CelebALandmarks(Dataset):
             image = self.transform(image)
 
         return image, landmarks.view(-1)  # shape: (10,)
+
+    def _augment_image_and_landmarks(self, image, landmarks):
+        """
+        Apply the same affine transform to image and landmarks.
+        """
+        w, h = image.size
+
+        angle = random.uniform(-15.0, 15.0)
+        scale = random.uniform(0.90, 1.10)
+        tx = random.uniform(-0.05 * w, 0.05 * w)
+        ty = random.uniform(-0.05 * h, 0.05 * h)
+
+        center = (w / 2.0, h / 2.0)
+        mat = cv2.getRotationMatrix2D(center, angle, scale).astype(np.float32)
+        mat[0, 2] += tx
+        mat[1, 2] += ty
+
+        img_np = np.array(image)
+        aug_np = cv2.warpAffine(
+            img_np,
+            mat,
+            (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT_101,
+        )
+        image = Image.fromarray(aug_np)
+
+        ones = torch.ones((landmarks.size(0), 1), dtype=torch.float32)
+        pts_h = torch.cat([landmarks, ones], dim=1).numpy()  # (N, 3)
+        transformed = (mat @ pts_h.T).T  # (N, 2)
+        landmarks = torch.from_numpy(transformed).to(dtype=torch.float32)
+
+        if random.random() < 0.5:
+            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+            landmarks[:, 0] = (w - 1) - landmarks[:, 0]
+            # CelebA order: [left_eye, right_eye, nose, left_mouth, right_mouth]
+            landmarks[[0, 1]] = landmarks[[1, 0]]
+            landmarks[[3, 4]] = landmarks[[4, 3]]
+
+        landmarks[:, 0] = landmarks[:, 0].clamp(0, w - 1)
+        landmarks[:, 1] = landmarks[:, 1].clamp(0, h - 1)
+
+        return image, landmarks
 
 
 class ConvBlock(nn.Module):
@@ -174,7 +222,7 @@ data_root = "/home/toru2/Amara/Deep_learning/dl_lab345.ipynb/dataset"
 
 transform = transforms.Compose([transforms.ToTensor()])
 
-train_dataset = CelebALandmarks(root_dir=data_root, split="train", transform=transform)
+train_dataset = CelebALandmarks(root_dir=data_root, split="train", transform=transform, augment=True)
 val_dataset = CelebALandmarks(root_dir=data_root, split="val", transform=transform)
 test_dataset = CelebALandmarks(root_dir=data_root, split="test", transform=transform)
 
