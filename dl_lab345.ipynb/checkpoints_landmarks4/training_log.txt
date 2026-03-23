@@ -46,3 +46,5 @@ Epoch 030/40 | train_loss=0.000025 | val_loss=0.000028 | time=63.0s
 Epoch 031/40 | train_loss=0.000024 | val_loss=0.000025 | time=62.5s
 Epoch 032/40 | train_loss=0.000024 | val_loss=0.000021 | time=63.6s
   Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
+Epoch 033/40 | train_loss=0.000024 | val_loss=0.000021 | time=61.6s
+  Saved BEST checkpoint -> /home/toru2/Amara/Deep_learning/dl_lab345.ipynb/checkpoints_landmarks4/best_model.pt
