@@ -11,12 +11,6 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 
-
-# Best params from sanity check:
-# lr=3e-4, optimizer=AdamW, weight_decay=0.0, loss=MSE, dropout=0.0
-
-
-# ------------------ static config ------------------
 CFG = {
     "seed": 42,
     "epochs": 40,
@@ -24,18 +18,18 @@ CFG = {
     "save_every": 5,
     "grad_clip": 1.0,
     "use_amp": True,
-    "out_dir": "./checkpoints_improved",
+    "out_dir": "checkpoints_landmarks3",
 }
 
-# Fixed training params selected from sanity check
 LR = 3e-4
 WEIGHT_DECAY = 0.0
 DROPOUT = 0.0
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CFG["out_dir"] = os.path.join(BASE_DIR, CFG["out_dir"])
 os.makedirs(CFG["out_dir"], exist_ok=True)
 
 
-# ------------------ reproducibility ------------------
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -172,6 +166,7 @@ class InceptionModel(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.dropout(x)
         x = self.fc(x)
+        x = torch.sigmoid(x) 
         return x
 
 
@@ -210,13 +205,10 @@ set_seed(CFG["seed"])
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# ------------------ model ------------------
 model = InceptionModel(num_classes=10).to(device)
 
-# ------------------ loss ------------------
 criterion = nn.MSELoss()
 
-# ------------------ optimizer ------------------
 optimizer = optim.AdamW(
     model.parameters(),
     lr=LR,
@@ -225,7 +217,6 @@ optimizer = optim.AdamW(
 
 scaler = torch.amp.GradScaler(device="cuda", enabled=(CFG["use_amp"] and device.type == "cuda"))
 
-# ------------------ training utilities ------------------
 def run_one_epoch(loader, train_mode=True):
     if train_mode:
         model.train()
@@ -265,10 +256,10 @@ def run_one_epoch(loader, train_mode=True):
 
     return total_loss / total_samples
 
-# ------------------ logging + checkpoints ------------------
 history = []
 best_val_loss = float("inf")
 best_epoch = -1
+log_csv = os.path.join(CFG["out_dir"], "training_log.csv")
 
 config_path = os.path.join(CFG["out_dir"], "train_config.json")
 with open(config_path, "w") as f:
@@ -292,6 +283,7 @@ for epoch in range(1, CFG["epochs"] + 1):
         "epoch_time_sec": round(epoch_sec, 2),
     }
     history.append(row)
+    pd.DataFrame(history).to_csv(log_csv, index=False)
 
     print(
         f"Epoch {epoch:03d}/{CFG['epochs']} | "
@@ -326,7 +318,6 @@ for epoch in range(1, CFG["epochs"] + 1):
         }, nth_path)
         print(f"  Saved periodic checkpoint -> {nth_path}")
 
-# Save final model
 final_path = os.path.join(CFG["out_dir"], "final_model.pt")
 torch.save({
     "epoch": CFG["epochs"],
@@ -335,9 +326,7 @@ torch.save({
     "config": CFG,
 }, final_path)
 
-# Save training log
 hist_df = pd.DataFrame(history)
-log_csv = os.path.join(CFG["out_dir"], "training_log.csv")
 hist_df.to_csv(log_csv, index=False)
 
 total_time = time.time() - start_all
@@ -347,7 +336,6 @@ print(f"Final model: {final_path}")
 print(f"Training log CSV: {log_csv}")
 print(f"Total time: {total_time/60:.1f} min")
 
-# Optional: evaluate test set with best checkpoint
 best_ckpt = torch.load(os.path.join(CFG["out_dir"], "best_model.pt"), map_location=device)
 model.load_state_dict(best_ckpt["model_state_dict"])
 test_loss = run_one_epoch(test_loader, train_mode=False)
