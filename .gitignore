@@ -9,5 +9,4 @@ data/
 lab1/checkpoints/complete_NN.pkl
 img_align_celeba/
 img_align_celeba/img_align_celeba
-lab3/dataset
-lab3/dataset/1774205023748-cv-corpus-25.0-2026-03-09-mn/
+lab3/common_voice_mn/
