@@ -1,7 +1,7 @@
-Commmon voice scripted speech 24.0 - Mongolian Mozilla fox
+       
 Mozilla Data Collective -> using IP and using locally 
 
-Uploaded into colab the file 
+Uploaded into colab the file z
 
 whisper wer evaluation can get 28%
 

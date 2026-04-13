@@ -1,0 +1,8 @@
+venv
+
+.env
+wav2vec2-mn-ft/checkpoint-*/
+wav2vec2-mn-ft/final-best/
+*.pt
+*.safetensors
+*.bin
