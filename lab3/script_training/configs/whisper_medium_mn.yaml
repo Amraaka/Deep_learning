@@ -1,0 +1,38 @@
+# Whisper-medium fine-tune on Common Voice Mongolian (RTX 5080, 16 GB)
+# Any field here can be overridden on the CLI, e.g.
+#   python src/main.py train --config configs/whisper_medium_mn.yaml --learning_rate 5e-5
+
+# ---------- data ----------
+data_root: lab3/common_voice_mn
+val_ratio: 0.05
+test_ratio: 0.05
+num_workers: 4
+max_input_length: 20.0      # seconds; Whisper hard-caps at 30
+
+# ---------- model ----------
+model_name_or_path: openai/whisper-medium
+use_lora: true
+lora_r: 32
+lora_alpha: 64
+gradient_checkpointing: true
+
+# ---------- optimization ----------
+num_train_epochs: 10
+train_batch_size: 8
+eval_batch_size: 8
+gradient_accumulation_steps: 4   # effective batch = 32
+learning_rate: 1.0e-4
+weight_decay: 0.01
+warmup_ratio: 0.1
+mixed_precision: bf16            # RTX 5080 / Blackwell
+
+# ---------- eval ----------
+eval_num_beams: 1                # bump to 5 for final test-set eval
+
+# ---------- early stopping / misc ----------
+early_stopping_patience: 3
+early_stopping_min_delta: 0.0
+output_dir: ./whisper-medium-mn-lora
+debug: false
+debug_subset_size: 32
+seed: 42

@@ -1,0 +1,21 @@
+# Core training stack for Whisper-medium fine-tuning on CV-mn (RTX 5080 / Blackwell).
+# Install PyTorch separately against your CUDA (sm_120 needs a recent nightly/stable build):
+#   pip install --pre torch torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124
+
+transformers>=4.44.0
+accelerate>=0.33.0
+peft>=0.12.0
+datasets>=2.20.0
+evaluate>=0.4.2
+jiwer>=3.0.3
+
+# Audio I/O for datasets.Audio decoding.
+soundfile>=0.12.1
+librosa>=0.10.2
+
+# Utilities.
+pandas>=2.2.0
+tqdm>=4.66.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+numpy>=1.26.0

@@ -1,5 +1,5 @@
 venv
-
+test_notebook/wav2vec2-mn-ft
 .env
 wav2vec2-mn-ft/checkpoint-*/
 wav2vec2-mn-ft/final-best/

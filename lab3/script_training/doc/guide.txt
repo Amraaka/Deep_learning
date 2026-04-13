@@ -1,0 +1,440 @@
+================================================================================
+  Whisper-medium Fine-tuning on Common Voice Mongolian — Training Guide
+================================================================================
+
+This guide walks through every moving part in `src/` so you can run, debug, and
+extend the pipeline that fine-tunes `openai/whisper-medium` on Mozilla Common
+Voice 25.0 Mongolian (CV-mn) using LoRA on an RTX 5080.
+
+Read top-to-bottom the first time. Later, use the section headings as an index.
+
+--------------------------------------------------------------------------------
+0. TL;DR — run it
+--------------------------------------------------------------------------------
+
+From `script_training/`:
+
+  # one-time
+  pip install -r requirements.txt
+  # install a PyTorch build that supports RTX 5080 (sm_120, Blackwell):
+  pip install --pre torch torchaudio --index-url \
+      https://download.pytorch.org/whl/nightly/cu124
+
+  # smoke test (32 samples / split, ~1 min)
+  python src/main.py train --config configs/whisper_medium_mn.yaml --debug
+
+  # full fine-tune
+  python src/main.py train --config configs/whisper_medium_mn.yaml
+
+  # evaluate best LoRA adapter on the held-out CV-mn test split
+  python src/main.py eval --model_dir ./whisper-medium-mn-lora
+
+
+--------------------------------------------------------------------------------
+1. Directory map
+--------------------------------------------------------------------------------
+
+  script_training/
+  ├── configs/
+  │   └── whisper_medium_mn.yaml   # all hyperparams, overridable on CLI
+  ├── doc/
+  │   ├── paths.md                 # on-disk layout of the CV-mn dataset
+  │   └── guide.txt                # this file
+  ├── notebooks/
+  │   └── smoke_test.ipynb         # cell-by-cell pipeline sanity check
+  ├── src/
+  │   ├── __init__.py
+  │   ├── main.py                  # CLI entry, subcommands: train / eval
+  │   ├── train.py                 # training loop (Accelerate + PEFT/LoRA)
+  │   ├── eval.py                  # standalone test-split evaluator
+  │   ├── local_dataset.py         # loads validated.tsv -> HF DatasetDict
+  │   ├── data_collate.py          # speech-seq2seq padding collator
+  │   └── utils.py                 # parameter counting / size helpers
+  └── requirements.txt
+
+
+--------------------------------------------------------------------------------
+2. Dataset — what gets loaded and how it’s split
+--------------------------------------------------------------------------------
+
+Source:  Mozilla Common Voice Scripted Speech 25.0 — Mongolian.
+Layout:  see doc/paths.md. The only TSV we consume is `validated.tsv`; the
+         pre-split train/dev/test TSVs in the release are ignored on purpose,
+         because CV-mn’s own splits are small and we want a deterministic
+         80/5/5-ish split we control with a seed.
+
+`src/local_dataset.py :: load_common_voice_mn(data_root, sampling_rate, val_ratio,
+test_ratio, seed)`:
+
+  1. Reads `<data_root>/validated.tsv`, keeps only `path` + `sentence`.
+  2. Drops empty sentences and rows whose clip file is missing on disk.
+  3. Rewrites `path` to an absolute path under `<data_root>/clips/`.
+  4. Shuffles deterministically (`seed`) and slices:
+        test = first  test_ratio * N rows
+        val  = next   val_ratio  * N rows
+        train= remainder
+  5. Returns a `datasets.DatasetDict({"train","validation","test"})` where the
+     audio column is a `datasets.Audio(sampling_rate=...)` — lazily decoded on
+     access via `soundfile`/`librosa`.
+
+NOTE on speaker leakage: rows are split independently of `client_id`, so a
+speaker can appear in both train and val. For a strict speaker-disjoint split,
+swap in `sklearn.model_selection.GroupShuffleSplit(groups=df["client_id"])`.
+
+
+--------------------------------------------------------------------------------
+3. Preprocessing and filtering (train.py)
+--------------------------------------------------------------------------------
+
+`load_and_prepare_datasets(args, processor)` runs a `.map` over each split:
+
+  - `audio["array"]` goes through `processor.feature_extractor` to produce the
+    80-bin log-mel `input_features` Whisper expects.
+  - `transcription` is normalized by `normalize_mn()` — lower-cased, punctuation
+    stripped, whitespace collapsed. Keeps Cyrillic (+ Mongolian-specific ө ү)
+    and `'` / `-`. Everything else is replaced with space.
+  - Normalized text is tokenized to `labels`.
+  - Length metadata `input_length` (seconds) and `labels_length` are attached
+    so we can filter in one shot.
+
+Filtering: drops samples with audio > `max_input_length` (default 20 s; Whisper
+hard-caps at 30 s but 20 s keeps the batch uniform and avoids OOM) and label
+sequences of length 0 or ≥ 448 (Whisper’s decoder context window).
+
+Debug mode: `--debug` slices each split to `debug_subset_size` (default 32)
+BEFORE the `.map`, which is how the smoke run finishes in a minute.
+
+
+--------------------------------------------------------------------------------
+4. The collator (data_collate.py)
+--------------------------------------------------------------------------------
+
+`DataCollatorSpeechSeq2SeqWithPadding` is a thin dataclass that:
+
+  - Pads the list of `input_features` using the feature extractor (it knows the
+    correct Whisper mel padding behavior and returns `torch.Tensor`).
+  - Pads `labels` independently via the tokenizer, then replaces pad positions
+    with `-100` so the HF cross-entropy loss ignores them.
+  - Strips the leading `decoder_start_token_id` from labels IFF the tokenizer
+    prepended one, so the model doesn’t double up — the Whisper decoder already
+    adds `<|startoftranscript|>` at forward time.
+
+Why this matters: the original `train.py` passed `bos_token_id` (= `<|endoftext|>`,
+id 50257) into the collator, which is NOT Whisper’s actual decoder start token
+(= `<|startoftranscript|>`, id 50258). The fix — and the reason this collator
+is now constructed AFTER `setup_model` — is:
+
+    data_collator = DataCollatorSpeechSeq2SeqWithPadding(
+        processor=processor,
+        decoder_start_token_id=model.config.decoder_start_token_id,
+    )
+
+
+--------------------------------------------------------------------------------
+5. Model setup (train.py :: setup_model)
+--------------------------------------------------------------------------------
+
+  1. Loads `WhisperForConditionalGeneration.from_pretrained(model_name_or_path)`.
+  2. Turns on SpecAugment on encoder features — a big WER win for low-resource
+     ASR:
+        apply_spec_augment=True, mask_time_prob=0.05, mask_time_length=10,
+        mask_feature_prob=0.05, mask_feature_length=10.
+  3. Pins generation to Mongolian-transcribe:
+        generation_config.language   = "mn"
+        generation_config.task       = "transcribe"
+        forced_decoder_ids           = None   # let the model predict freely
+        suppress_tokens              = []
+  4. Disables `use_cache` (required by gradient checkpointing) and optionally
+     turns on gradient checkpointing + `enable_input_require_grads()` so grads
+     flow through the frozen embedding when LoRA is used.
+  5. If `--use_lora`: wraps the model with PEFT LoRA on attention + MLP
+     projections:
+        target_modules = ["q_proj","k_proj","v_proj","out_proj","fc1","fc2"]
+        r = lora_r (default 32), alpha = lora_alpha (default 64),
+        dropout = 0.05.
+     Targeting q/k/v/o AND fc1/fc2 gives noticeably better WER than the
+     common “q,v only” recipe at the cost of a few extra trainable params.
+  6. Prints a parameter table via `utils.count_parameters` and the total model
+     footprint via `utils.compute_module_sizes`.
+
+Trainable-parameter ballpark for Whisper-medium (764 M params) with LoRA r=32
+on the six targets: ~17–20 M trainable, ~2.3 GB on disk in fp32 when saved as
+a full checkpoint, ~70 MB when only the adapters are saved.
+
+
+--------------------------------------------------------------------------------
+6. Optimizer and scheduler
+--------------------------------------------------------------------------------
+
+  - AdamW with betas=(0.9, 0.98), `weight_decay` from config, filtered to
+    `requires_grad=True` params (i.e. LoRA adapters only when LoRA is on).
+  - LR schedule: cosine decay with warmup. `num_training_steps` is computed as
+        ceil(len(train_loader) / gradient_accumulation_steps) * num_train_epochs
+    and `num_warmup = warmup_ratio * num_training_steps`.
+  - Gradient clipping at max_norm=1.0, only when `accelerator.sync_gradients`
+    is true (i.e. at the end of an accumulation window).
+
+
+--------------------------------------------------------------------------------
+7. Accelerate setup and mixed precision
+--------------------------------------------------------------------------------
+
+`initialize_accelerator` wires:
+  - `mixed_precision` = bf16 (recommended on Blackwell/Ada/Hopper; stable and
+    no loss scaler).
+  - `gradient_accumulation_steps` — effective batch = `train_batch_size *
+    gradient_accumulation_steps` (default 8 * 4 = 32).
+  - `log_with="all"` — pluggable trackers; no tracker is initialized by default,
+    so nothing is logged externally. Add `accelerator.init_trackers("cv-mn")`
+    if you want TensorBoard/WandB.
+
+`set_environment` also enables TF32 matmul (`allow_tf32=True`) which speeds up
+the few fp32 ops that survive mixed precision on Ampere+.
+
+
+--------------------------------------------------------------------------------
+8. Training loop (train.py :: train_epoch / validate / train)
+--------------------------------------------------------------------------------
+
+Per-epoch loop:
+
+  for batch in train_loader:
+      with accelerator.accumulate(model):
+          loss = model(**batch).loss
+          accelerator.backward(loss)
+          if accelerator.sync_gradients:
+              accelerator.clip_grad_norm_(model.parameters(), 1.0)
+          optimizer.step(); scheduler.step(); optimizer.zero_grad()
+
+Validation runs every epoch and computes two numbers:
+
+  - val_loss — teacher-forced cross-entropy on the validation set.
+  - val_WER  — built from `model.generate()` (NOT from an argmax over logits).
+               Uses greedy decoding by default (`eval_num_beams=1`); bump to 5
+               for a final pristine evaluation.
+
+Both preds and refs go through `BasicTextNormalizer` before WER; refs that
+normalize to an empty string are dropped to avoid divide-by-zero in `jiwer`.
+
+Early stopping: tracks best `val_WER` with `early_stopping_min_delta` and
+breaks after `early_stopping_patience` epochs of no improvement. On every new
+best, the model is saved.
+
+Saving: `save_model` calls `accelerator.unwrap_model(model).save_pretrained()`.
+For a PEFT model this writes only `adapter_config.json` + `adapter_model.*`
+plus the tokenizer/processor — the base Whisper weights are referenced by name
+and re-downloaded at eval time. Keep `base_model_name_or_path` resolvable.
+
+
+--------------------------------------------------------------------------------
+9. Evaluation (eval.py)
+--------------------------------------------------------------------------------
+
+`evaluate_checkpoint(model_dir, data_root, ...)`:
+
+  1. Detects whether `model_dir` is a PEFT adapter (by the presence of
+     `adapter_config.json`) or a full HF checkpoint.
+  2. If PEFT: loads the base model from `PeftConfig.base_model_name_or_path`
+     and wraps it with `PeftModel.from_pretrained(base, model_dir)`.
+  3. Loads the processor from the adapter dir if it was saved there, otherwise
+     from the base model.
+  4. Re-runs the same split logic (`load_common_voice_mn`) with the SAME
+     `val_ratio / test_ratio / seed` used at training — so the test rows are
+     the ones the model actually never saw. Different seeds → different test
+     sets → meaningless numbers.
+  5. Preprocesses + filters the test split with `normalize_mn` and the same
+     `max_input_length`.
+  6. Moves model to CUDA/MPS/CPU; casts to bf16 on CUDA if supported.
+  7. Decodes with `num_beams=5` (default) and 225 max new tokens.
+  8. Reports `jiwer` WER over normalized (pred, ref) pairs.
+
+CLI:
+  python src/main.py eval \
+      --config configs/whisper_medium_mn.yaml \
+      --model_dir ./whisper-medium-mn-lora \
+      --num_beams 5
+
+Or standalone: `python src/eval.py --model_dir ./whisper-medium-mn-lora`.
+
+
+--------------------------------------------------------------------------------
+10. Config precedence (main.py)
+--------------------------------------------------------------------------------
+
+Precedence:  CLI flags  >  YAML config  >  argparse defaults.
+
+`_apply_config` parses argv once, looks for `--config`, loads that YAML,
+rejects any unknown keys, then calls `parser.set_defaults(**cfg)` and parses
+argv again. Net effect: YAML values become the new defaults, and anything
+also passed on the CLI silently overrides them.
+
+Invariant: every key in `configs/whisper_medium_mn.yaml` must have a matching
+argparse argument, or `_apply_config` raises. That’s a feature — it catches
+typos in the YAML before training starts.
+
+Both subcommands — `train` and `eval` — support `--config`.
+
+
+--------------------------------------------------------------------------------
+11. Config reference (defaults in configs/whisper_medium_mn.yaml)
+--------------------------------------------------------------------------------
+
+Data
+  data_root:            lab3/common_voice_mn     # dir containing validated.tsv + clips/
+  val_ratio:            0.05
+  test_ratio:           0.05
+  num_workers:          4                        # datasets .map + DataLoader workers
+  max_input_length:     20.0                     # seconds; Whisper hard-caps 30
+
+Model
+  model_name_or_path:   openai/whisper-medium
+  use_lora:             true
+  lora_r:               32
+  lora_alpha:           64
+  gradient_checkpointing: true
+
+Optimization
+  num_train_epochs:            10
+  train_batch_size:            8
+  eval_batch_size:             8
+  gradient_accumulation_steps: 4                 # effective batch = 32
+  learning_rate:               1.0e-4
+  weight_decay:                0.01
+  warmup_ratio:                0.1
+  mixed_precision:             bf16
+
+Eval / misc
+  eval_num_beams:              1                 # bump to 5 for final test run
+  early_stopping_patience:     3
+  early_stopping_min_delta:    0.0
+  output_dir:                  ./whisper-medium-mn-lora
+  debug:                       false
+  debug_subset_size:            32
+  seed:                        42
+
+
+--------------------------------------------------------------------------------
+12. RTX 5080 specifics (Blackwell / sm_120)
+--------------------------------------------------------------------------------
+
+  - Use bf16, not fp16. bf16 on Blackwell is native and removes the GradScaler
+    round-trip entirely.
+  - TF32 matmul is enabled — no action needed.
+  - Install a PyTorch build with sm_120 kernels. Stable wheels may lag; if
+    training errors out with "no kernel image is available for execution",
+    install the nightly as in §0.
+  - VRAM budget for Whisper-medium + LoRA + grad checkpointing + bf16:
+      train_batch_size=8, seq_len≤20 s ⇒ ~11–13 GB on a 16 GB card. If you OOM,
+      in order of preference: (a) drop to train_batch_size=4 and bump
+      gradient_accumulation_steps to 8, (b) drop max_input_length to 16 s,
+      (c) drop lora_r to 16.
+
+
+--------------------------------------------------------------------------------
+13. Notebook workflow (notebooks/smoke_test.ipynb)
+--------------------------------------------------------------------------------
+
+Run each cell top-to-bottom before a full training run. It exercises every
+stage with a 16-sample subset:
+
+  1  repo / sys.path setup         5  preprocess + filter
+  2  torch + CUDA + bf16 check     6  collator builds a real batch
+  3  dataset load & split          7  setup_model (LoRA on)
+  4  processor round-trip          8  forward pass / loss is finite
+                                    9  generate() + decode
+                                   10 WER metric + normalizer
+                                   11 one optimizer step end-to-end
+
+If any cell fails, fix it before running the full pipeline — every failure
+here is a bug you’d otherwise hit ~10 minutes into training.
+
+
+--------------------------------------------------------------------------------
+14. Outputs and artifacts
+--------------------------------------------------------------------------------
+
+On each new best `val_WER`, `output_dir` (default `./whisper-medium-mn-lora`)
+is overwritten with:
+
+  whisper-medium-mn-lora/
+  ├── adapter_config.json         # PEFT: base model id, target modules, r, α
+  ├── adapter_model.safetensors   # LoRA deltas (~70 MB)
+  ├── preprocessor_config.json    # feature extractor config
+  ├── tokenizer_config.json
+  ├── special_tokens_map.json
+  ├── added_tokens.json
+  ├── vocab.json
+  └── merges.txt
+
+To use this at inference:
+
+    from peft import PeftModel
+    from transformers import WhisperForConditionalGeneration, WhisperProcessor
+
+    base = WhisperForConditionalGeneration.from_pretrained("openai/whisper-medium")
+    model = PeftModel.from_pretrained(base, "./whisper-medium-mn-lora")
+    processor = WhisperProcessor.from_pretrained(
+        "./whisper-medium-mn-lora", language="mn", task="transcribe"
+    )
+
+To bake the adapters into a full checkpoint (useful for deployment):
+
+    merged = model.merge_and_unload()
+    merged.save_pretrained("./whisper-medium-mn-merged")
+    processor.save_pretrained("./whisper-medium-mn-merged")
+
+
+--------------------------------------------------------------------------------
+15. Troubleshooting
+--------------------------------------------------------------------------------
+
+"ModuleNotFoundError: data_collate"
+    You’re running from the wrong CWD. Always run from `script_training/`
+    (which puts `src/` on sys.path via `python src/main.py ...`), or add `src/`
+    to PYTHONPATH.
+
+"validated.tsv not found at ..."
+    `data_root` is wrong. Check `doc/paths.md`. The path is relative to CWD;
+    absolute paths also work.
+
+WER stays ~1.0 (or above)
+    (a) You forgot `language="mn"` somewhere — check `setup_model`. (b) You’re
+    computing WER from argmax over logits instead of `generate()`. (c) Your
+    test set was split with a different `seed` than training. (d) You saved
+    only the LoRA adapters and evaluated the base model by pointing at the
+    base model dir instead of the adapter dir.
+
+Loss is NaN after a few steps
+    Switch to bf16 if you were on fp16, or lower the learning rate. fp16 on
+    Whisper-medium is notoriously touchy — bf16 on Blackwell is the right
+    default.
+
+OOM at validation time but not training time
+    Validation uses `generate()` which keeps the KV cache. Drop
+    `eval_batch_size` (it’s independent of `train_batch_size`). `use_cache` is
+    force-disabled at training time; it re-enables itself during `generate`.
+
+"no kernel image is available for execution on the device"
+    Your PyTorch build doesn’t have sm_120 kernels. See §12.
+
+Empty references after normalization
+    Expected for a handful of samples (punctuation-only sentences). The code
+    already filters them out before computing WER.
+
+
+--------------------------------------------------------------------------------
+16. Extending the pipeline
+--------------------------------------------------------------------------------
+
+  - Add wandb/tensorboard: `accelerator.init_trackers("cv-mn", config=vars(args))`
+    in `train()`, then `accelerator.log({"train_loss": ...}, step=...)` inside
+    the loop.
+  - Speaker-disjoint splits: edit `local_dataset.py` to use
+    `GroupShuffleSplit(n_splits=1, test_size=test_ratio).split(df, groups=df["client_id"])`.
+  - Stronger regularization: bump `mask_time_prob` / `mask_feature_prob`
+    toward 0.1; or raise `lora_dropout` to 0.1.
+  - Full fine-tune (no LoRA): `--no_lora` on the CLI. Needs ~24+ GB VRAM and a
+    much smaller LR (1e-5 to 2e-5).
+  - Bigger base: swap `--model_name_or_path openai/whisper-large-v3`. Lower
+    `train_batch_size` to 2–4 and raise `gradient_accumulation_steps`
+    accordingly.

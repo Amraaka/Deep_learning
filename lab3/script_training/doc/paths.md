@@ -1,0 +1,13 @@
+lab3/common_voice_mn
+lab3/common_voice_mn/clips
+lab3/common_voice_mn/clip_durations.tsv
+lab3/common_voice_mn/dev.tsv
+lab3/common_voice_mn/invalidated.tsv
+lab3/common_voice_mn/other.tsv
+lab3/common_voice_mn/README.md
+lab3/common_voice_mn/reported.tsv
+lab3/common_voice_mn/test.tsv
+lab3/common_voice_mn/train.tsv
+lab3/common_voice_mn/unvalidated_sentences.tsv
+lab3/common_voice_mn/validated_sentences.tsv
+lab3/common_voice_mn/validated.tsv
