@@ -1,0 +1,16 @@
+torch>=2.2.0
+transformers>=4.40.0
+datasets>=2.18.0
+accelerate>=0.28.0
+peft>=0.10.0
+evaluate>=0.4.1
+jiwer>=3.0.0
+tensorboard>=2.16.0
+soundfile>=0.12.1
+librosa>=0.10.1
+gradio>=4.20.0
+pandas>=2.1.0
+huggingface_hub>=0.22.0
+# Note: datasets>=3.x requires torchcodec for Audio feature decoding.
+# This script avoids the Audio feature entirely and uses soundfile directly,
+# so torchcodec is NOT required.
