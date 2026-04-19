@@ -1,0 +1,35 @@
+MODEL_ID = "openai/whisper-medium"
+LANGUAGE = "mongolian"
+TASK = "transcribe"
+TASK_CHOICES = ("transcribe", "translate", "multitask")
+DEFAULT_TASK_MODE = "multitask"
+DEFAULT_EVAL_TASK = "transcribe"
+DEFAULT_TRANSLATED_DATASET_ID = "Ganaa0614/mongolian-commonvoice-stt-translated-full"
+
+SEED = 42
+TRAIN_RATIO = 0.80
+
+PER_DEVICE_TRAIN_BATCH_SIZE = 8
+PER_DEVICE_EVAL_BATCH_SIZE = 8
+GRADIENT_ACCUMULATION_STEPS = 2
+
+LEARNING_RATE = 1e-5
+WARMUP_STEPS = 500
+MAX_STEPS = 6000
+EVAL_STEPS = 500
+SAVE_STEPS = 500
+WEIGHT_DECAY = 0.01
+
+MAX_SENTENCE_CHARS = 200
+
+GENERATION_MAX_LENGTH = 225
+LOGGING_STEPS = 25
+SAVE_TOTAL_LIMIT = 3
+
+# Memmap feature shape (Whisper log-mel)
+N_MEL = 80
+N_FRAMES = 3000
+
+MIN_DISK_GB_FOR_CACHE = 16
+
+FEATURE_CACHE_SUBDIR = "feature_cache_v2"

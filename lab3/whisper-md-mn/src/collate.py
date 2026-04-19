@@ -8,7 +8,6 @@ import torch
 
 from transformers import WhisperProcessor
 
-
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
     processor: WhisperProcessor

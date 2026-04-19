@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 
 
 def check_disk_space(cache_dir: Path, min_gb: float = MIN_DISK_GB_FOR_CACHE) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
     free_gb = shutil.disk_usage(str(cache_dir)).free / 1e9
     log.info("Free disk: %.1f GB  (need ~%.0f GB for feature cache)", free_gb, min_gb)
     if free_gb < min_gb:

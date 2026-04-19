@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
 """
-Full fine-tune Whisper Medium on Common Voice Mongolian (memmap cache).
-
-Run from this directory:
-  python run_train.py
-
-Requires CUDA + bitsandbytes 8-bit Adam (see finetune.py).
-Sanity / teaching: sanity-check.ipynb
-Demo: python gradio_demo.py --model-path results
 """
 
 import argparse

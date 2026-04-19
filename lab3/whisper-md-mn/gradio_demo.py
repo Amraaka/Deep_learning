@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Gradio ASR for a **full** fine-tuned Whisper checkpoint (not LoRA).
-
   python gradio_demo.py --model-path results
-
-Use the training output directory (or a checkpoint-* folder with config + weights).
 """
 
 import argparse
+from pathlib import Path
 
 import gradio as gr
 import librosa
@@ -15,6 +12,25 @@ import torch
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
 from src.config import LANGUAGE, TASK
+
+
+def _resolve_model_dir(model_path: str) -> str:
+    """Return a path that actually contains model weight files."""
+    base = Path(model_path)
+    weight_files = ("model.safetensors", "pytorch_model.bin")
+
+    if any((base / w).exists() for w in weight_files):
+        return str(base)
+
+    checkpoints = sorted(
+        (p for p in base.glob("checkpoint-*") if p.is_dir()),
+        key=lambda p: int(p.name.split("-")[-1]) if p.name.split("-")[-1].isdigit() else -1,
+    )
+    for ckpt in reversed(checkpoints):
+        if any((ckpt / w).exists() for w in weight_files):
+            return str(ckpt)
+
+    return str(base)
 
 
 def parse_args():
@@ -32,9 +48,10 @@ def parse_args():
 def main() -> None:
     args = parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    model_dir = _resolve_model_dir(args.model_path)
 
     processor = WhisperProcessor.from_pretrained(args.model_path)
-    model = WhisperForConditionalGeneration.from_pretrained(args.model_path)
+    model = WhisperForConditionalGeneration.from_pretrained(model_dir)
     model.to(device)
     model.eval()
 
@@ -53,8 +70,8 @@ def main() -> None:
         inputs=gr.Audio(sources=["microphone", "upload"], type="filepath"),
         outputs="text",
         title="Whisper Medium — Mongolian (full fine-tune)",
-        description=f"Model: {args.model_path}",
-    ).launch(share=args.share)
+        description=f"Model: {model_dir} | Processor: {args.model_path}",
+    ).launch(share=True)
 
 
 if __name__ == "__main__":
