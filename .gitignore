@@ -30,6 +30,7 @@ lab3/whisper-md-mn/results/runs/Apr14_13-49-14_ToruDev-System-Product-Name/event
 # Midterm2 LoRA artifacts
 midterm2/qwen-tsuivan-lora/checkpoint-*/
 midterm2/qwen-tsuivan-lora/*.safetensors
+midterm2/qwen-tsuivan-lora/tokenizer.json
 midterm2/qwen-tsuivan-lora/**/*.pt
 midterm2/qwen-tsuivan-lora/**/*.pth
 midterm2/qwen-tsuivan-lora/**/*.bin
