@@ -26,3 +26,10 @@ lab3/whisper-md-mnTranslate_v0/results/runs/Apr14_19-00-51_ToruDev-System-Produc
 lab3/whisper-md-mnTranslate_v0/.gradio/certificate.pem
 lab3/whisper-md-mn/.gradio/certificate.pem
 lab3/whisper-md-mn/results/runs/Apr14_13-49-14_ToruDev-System-Product-Name/events.out.tfevents.1776160848.ToruDev-System-Product-Name.11008.1
+
+# Midterm2 LoRA artifacts
+midterm2/qwen-tsuivan-lora/checkpoint-*/
+midterm2/qwen-tsuivan-lora/*.safetensors
+midterm2/qwen-tsuivan-lora/**/*.pt
+midterm2/qwen-tsuivan-lora/**/*.pth
+midterm2/qwen-tsuivan-lora/**/*.bin
